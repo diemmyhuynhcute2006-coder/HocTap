@@ -1,0 +1,7 @@
+{
+  "name": "My Alcove",
+  "description": "Không gian tập trung cá nhân ấm áp với căn phòng ảo, nhân vật chibi đồng hành, streak và phần thưởng.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
