@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShoppingBag, Lock, Check, Sparkles, X } from 'lucide-react';
 import { ItemCategory, ShopItem, ThemeColor } from '../types';
 import { SHOP_ITEMS, THEME_CONFIGS } from '../data/items';
 import { audioService } from '../utils/audio';
+import { CategoryFilterBar, CategoryItem } from './CategoryFilterBar';
 
 interface ShopModalProps {
   isOpen: boolean;
@@ -26,9 +27,21 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const [activeCategory, setActiveCategory] = useState<ItemCategory | 'all'>('all');
   const theme = THEME_CONFIGS[themeColor];
 
+  // Close on ESC key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
-  const categories: { key: ItemCategory | 'all'; label: string; icon: string }[] = [
+  const categories: CategoryItem<ItemCategory | 'all'>[] = [
     { key: 'all', label: 'Tất cả', icon: '🛍️' },
     { key: 'plants', label: 'Cây & Hoa', icon: '🌱' },
     { key: 'furniture', label: 'Nội thất & Bàn', icon: '🪑' },
@@ -44,7 +57,15 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   });
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          audioService.playClick();
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+    >
       <div className="bg-white dark:bg-stone-900 rounded-3xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl border border-stone-200 dark:border-stone-800 overflow-hidden">
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between">
@@ -82,30 +103,17 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           </div>
         </div>
 
-        {/* Category Tabs */}
-        <div className="px-6 py-3 border-b border-stone-100 dark:border-stone-800/80 bg-stone-50/50 dark:bg-stone-950/40 flex items-center gap-2 overflow-x-auto scrollbar-none">
-          {categories.map((cat) => {
-            const isSelected = activeCategory === cat.key;
-            return (
-              <button
-                key={cat.key}
-                type="button"
-                onClick={() => {
-                  audioService.playClick();
-                  setActiveCategory(cat.key);
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all flex items-center gap-1.5 ${
-                  isSelected
-                    ? `${theme.accentBg} shadow-xs`
-                    : 'bg-white dark:bg-stone-800/80 text-stone-600 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-700/80 border border-stone-200/60 dark:border-stone-700/60'
-                }`}
-              >
-                <span>{cat.icon}</span>
-                <span>{cat.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        {/* Category Tabs Filter Bar with Wheel Scroll, Drag-to-Scroll & < > Buttons */}
+        <CategoryFilterBar
+          categories={categories}
+          activeCategory={activeCategory}
+          onSelectCategory={(key) => {
+            audioService.playClick();
+            setActiveCategory(key);
+          }}
+          accentBgClass={theme.accentBg}
+        />
+
 
         {/* Items Grid */}
         <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">

@@ -7,17 +7,14 @@ import {
   Sparkles,
   Volume2,
   VolumeX,
-  Maximize2,
-  Minimize2,
   AlertCircle,
-  Clock,
-  Target,
   GraduationCap,
   Briefcase,
   BookOpen,
   CalendarCheck,
   PenTool,
   Flame,
+  ShieldAlert,
 } from 'lucide-react';
 import { ActivityType, FocusSession, ThemeColor } from '../types';
 import { ACTIVITIES, TIME_PRESETS, THEME_CONFIGS } from '../data/items';
@@ -50,8 +47,15 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
   const [totalPausedSeconds, setTotalPausedSeconds] = useState<number>(0);
   const [lastPauseTimestamp, setLastPauseTimestamp] = useState<number | null>(null);
 
-  // Distraction-free & UI modals
-  const [isMinimalistMode, setIsMinimalistMode] = useState<boolean>(false);
+  // Violation Tracking states (Tab hidden & Window blur)
+  const [violationCount, setViolationCount] = useState<number>(0);
+  const [violationWarning, setViolationWarning] = useState<{ show: boolean; count: number }>({
+    show: false,
+    count: 0,
+  });
+  const [failedDueToViolations, setFailedDueToViolations] = useState<boolean>(false);
+
+  // Modals & results
   const [showAbandonConfirm, setShowAbandonConfirm] = useState<boolean>(false);
   const [showCompleteModal, setShowCompleteModal] = useState<boolean>(false);
   const [completedPoints, setCompletedPoints] = useState<number>(0);
@@ -63,6 +67,30 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
 
   const theme = THEME_CONFIGS[themeColor];
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Dynamic live refs for listeners
+  const isActiveRef = useRef(isActive);
+  const isPausedRef = useRef(isPaused);
+  const secondsRemainingRef = useRef(secondsRemaining);
+  const totalPausedSecondsRef = useRef(totalPausedSeconds);
+  const lastViolationTimeRef = useRef<number>(0);
+  const originalTitleRef = useRef<string>(typeof document !== 'undefined' ? document.title : 'My Alcove');
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  useEffect(() => {
+    secondsRemainingRef.current = secondsRemaining;
+  }, [secondsRemaining]);
+
+  useEffect(() => {
+    totalPausedSecondsRef.current = totalPausedSeconds;
+  }, [totalPausedSeconds]);
 
   // Icon mapper helper
   const getActivityIcon = (iconName: string) => {
@@ -76,6 +104,136 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
       default: return <Flame className="w-4 h-4" />;
     }
   };
+
+  // Resume function to unpause timer
+  const handleResume = () => {
+    audioService.playClick();
+    if (lastPauseTimestamp) {
+      const pauseDelta = Math.floor((Date.now() - lastPauseTimestamp) / 1000);
+      setTotalPausedSeconds((prev) => prev + pauseDelta);
+    }
+    setIsPaused(false);
+    setLastPauseTimestamp(null);
+    document.title = originalTitleRef.current;
+    if (!isSoundMuted) {
+      audioService.setAmbient(ambientSound);
+    }
+  };
+
+  // Pause function
+  const handlePause = () => {
+    audioService.playClick();
+    setIsPaused(true);
+    setLastPauseTimestamp(Date.now());
+    audioService.stopAmbient();
+  };
+
+  // Trigger violation handler: Pauses timer & records violation
+  const triggerViolation = (reason: string) => {
+    if (!isActiveRef.current) return;
+    const now = Date.now();
+    // 2-second cooldown to avoid duplicate triggers from compound blur + visibilitychange events
+    if (now - lastViolationTimeRef.current < 2000) return;
+    lastViolationTimeRef.current = now;
+
+    // 1. TỰ ĐỘNG TẠM DỪNG BỘ ĐẾM KHI RỜI TAB HOẶC RỜI CỬA SỔ
+    if (!isPausedRef.current) {
+      setIsPaused(true);
+      setLastPauseTimestamp(Date.now());
+      audioService.stopAmbient();
+    }
+
+    // 2. Đổi tiêu đề trang & phát âm thanh nhắc nhở
+    document.title = '⚠️ Vui lòng quay lại ngay!';
+    audioService.playGiveupSound();
+
+    // 3. Tăng số lần vi phạm & xử lý cảnh báo / hủy phiên
+    setViolationCount((prev) => {
+      const next = prev + 1;
+      if (next >= 3) {
+        // Tự động hủy phiên khi vi phạm >= 3 lần
+        handleViolationsExceeded();
+        return 0;
+      } else {
+        setViolationWarning({
+          show: true,
+          count: next,
+        });
+        return next;
+      }
+    });
+  };
+
+  const handleUserReturned = () => {
+    // When returning to tab, title will be restored once dismissed or resumed
+  };
+
+  // Session canceled due to exceeding 3 violations
+  const handleViolationsExceeded = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    audioService.stopAmbient();
+    audioService.playGiveupSound();
+
+    const finalDuration = customDurationInput ? parseInt(customDurationInput, 10) : selectedDuration;
+    const totalSecondsInitial = finalDuration * 60;
+    const elapsedSeconds = Math.max(0, totalSecondsInitial - secondsRemainingRef.current - totalPausedSecondsRef.current);
+    const actualMins = Math.max(1, Math.round(elapsedSeconds / 60));
+
+    const now = new Date();
+    const startStr = sessionStartTime ? sessionStartTime.toISOString() : now.toISOString();
+
+    onSessionAbandon({
+      startTime: startStr,
+      endTime: now.toISOString(),
+      activityType: selectedActivity,
+      goal: goal.trim() || 'Phiên tập trung',
+      durationMinutes: finalDuration,
+      actualMinutes: actualMins,
+      status: 'abandoned',
+      pointsEarned: 0,
+      dateStr: new Date().toLocaleDateString('en-CA'),
+    });
+
+    setIsActive(false);
+    setIsPaused(false);
+    onFocusStateChange(false);
+    setViolationWarning({ show: false, count: 0 });
+    setFailedDueToViolations(true);
+    document.title = originalTitleRef.current;
+  };
+
+  // Violation event listeners: Tab hidden (visibilitychange) and Window blur
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (isActiveRef.current) {
+          triggerViolation('Chuyển tab');
+        }
+      } else {
+        handleUserReturned();
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (isActiveRef.current) {
+        triggerViolation('Rời khỏi cửa sổ');
+      }
+    };
+
+    const handleWindowFocus = () => {
+      handleUserReturned();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, []);
 
   // Timer Tick Hook
   useEffect(() => {
@@ -111,7 +269,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
     };
   }, [isActive, isPaused, isSoundMuted, ambientSound]);
 
-  // Start Focus Session
+  // Start Focus Session (Enters In-App Fullscreen Modal)
   const handleStart = () => {
     const finalDuration = customDurationInput ? parseInt(customDurationInput, 10) : selectedDuration;
     if (isNaN(finalDuration) || finalDuration <= 0 || finalDuration > 120) return;
@@ -121,29 +279,20 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
     setSessionStartTime(new Date());
     setTotalPausedSeconds(0);
     setLastPauseTimestamp(null);
+    setViolationCount(0);
+    setViolationWarning({ show: false, count: 0 });
+    setFailedDueToViolations(false);
     setIsActive(true);
     setIsPaused(false);
-    setIsMinimalistMode(true);
     onFocusStateChange(true);
   };
 
   // Pause / Resume Focus
   const handleTogglePause = () => {
-    audioService.playClick();
     if (!isPaused) {
-      setIsPaused(true);
-      setLastPauseTimestamp(Date.now());
-      audioService.stopAmbient();
+      handlePause();
     } else {
-      if (lastPauseTimestamp) {
-        const pauseDelta = Math.floor((Date.now() - lastPauseTimestamp) / 1000);
-        setTotalPausedSeconds((prev) => prev + pauseDelta);
-      }
-      setIsPaused(false);
-      setLastPauseTimestamp(null);
-      if (!isSoundMuted) {
-        audioService.setAmbient(ambientSound);
-      }
+      handleResume();
     }
   };
 
@@ -174,7 +323,9 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
     setShowCompleteModal(true);
     setIsActive(false);
     setIsPaused(false);
+    setViolationCount(0);
     onFocusStateChange(false);
+    document.title = originalTitleRef.current;
 
     onSessionComplete({
       startTime: startStr,
@@ -185,7 +336,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
       actualMinutes: durationMins,
       status: 'completed',
       pointsEarned: durationMins,
-      dateStr: new Date().toLocaleDateString('en-CA'), // YYYY-MM-DD local format
+      dateStr: new Date().toLocaleDateString('en-CA'),
     });
   };
 
@@ -196,8 +347,9 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
     setShowAbandonConfirm(false);
     setIsActive(false);
     setIsPaused(false);
-    setIsMinimalistMode(false);
+    setViolationCount(0);
     onFocusStateChange(false);
+    document.title = originalTitleRef.current;
 
     const totalSecondsInitial = (customDurationInput ? parseInt(customDurationInput, 10) : selectedDuration) * 60;
     const elapsedSeconds = Math.max(0, totalSecondsInitial - secondsRemaining - totalPausedSeconds);
@@ -228,6 +380,23 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
 
   const currentDurationValue = customDurationInput ? parseInt(customDurationInput, 10) : selectedDuration;
   const currentActivityMeta = ACTIVITIES.find((a) => a.type === selectedActivity) || ACTIVITIES[0];
+
+  // Keyboard ESC listener for dialogs
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        if (showAbandonConfirm) setShowAbandonConfirm(false);
+        if (showCompleteModal) setShowCompleteModal(false);
+        if (violationWarning.show) {
+          setViolationWarning((prev) => ({ ...prev, show: false }));
+          document.title = originalTitleRef.current;
+        }
+        if (failedDueToViolations) setFailedDueToViolations(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showAbandonConfirm, showCompleteModal, violationWarning.show, failedDueToViolations]);
 
   return (
     <div className="w-full max-w-4xl mx-auto">
@@ -283,61 +452,63 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
             </div>
           </div>
 
-          {/* Goal Input */}
+          {/* Specific Goal Input */}
           <div className="space-y-2">
-            <label htmlFor="goal-input" className="text-xs font-semibold text-stone-600 dark:text-stone-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Target className="w-3.5 h-3.5" />
-              <span>2. Mục tiêu cụ thể trong phiên này</span>
-            </label>
-            <input
-              id="goal-input"
-              type="text"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="Ví dụ: Đọc xong chương 3, Lập dàn ý bài luận..."
-              maxLength={80}
-              className="w-full px-4 py-3 bg-stone-50 dark:bg-stone-800/50 border border-stone-200 dark:border-stone-700 rounded-2xl text-sm text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all placeholder:text-stone-400"
-            />
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
+                2. Mục tiêu cụ thể
+              </label>
+              <span className="text-[11px] text-stone-400">Ví dụ: Học 30 từ vựng N3</span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={goal}
+                onChange={(e) => setGoal(e.target.value)}
+                maxLength={60}
+                placeholder="Nhập mục tiêu bạn muốn hoàn thành..."
+                className="w-full px-4 py-3 bg-stone-50 dark:bg-stone-800/60 border border-stone-200 dark:border-stone-700 rounded-2xl text-stone-900 dark:text-stone-100 placeholder-stone-400 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+              />
+              <span className="absolute right-3.5 top-3.5 text-xs text-stone-400 font-mono">
+                {goal.length}/60
+              </span>
+            </div>
           </div>
 
-          {/* Duration Selector */}
+          {/* Duration Presets & Custom Input */}
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-stone-600 dark:text-stone-400 uppercase tracking-wider flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5" />
-                <span>3. Thời gian tập trung (tối đa 120 phút)</span>
-              </span>
-              <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">
-                {currentDurationValue || 25} phút
-              </span>
+            <label className="text-xs font-semibold text-stone-600 dark:text-stone-400 uppercase tracking-wider">
+              3. Thời gian tập trung (Tối đa 120 phút)
             </label>
-
-            {/* Quick Preset Buttons */}
-            <div className="flex flex-wrap items-center gap-2">
-              {TIME_PRESETS.map((mins) => {
-                const isSelected = selectedDuration === mins && !customDurationInput;
+            <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+              {TIME_PRESETS.map((preset) => {
+                const isSelected = selectedDuration === preset && !customDurationInput;
                 return (
                   <button
-                    key={mins}
+                    key={preset}
                     type="button"
                     onClick={() => {
                       audioService.playClick();
-                      setSelectedDuration(mins);
+                      setSelectedDuration(preset);
                       setCustomDurationInput('');
                     }}
-                    className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+                    className={`py-3 rounded-2xl border text-center transition-all ${
                       isSelected
-                        ? `${theme.accentBg} shadow-sm`
-                        : 'bg-stone-100 dark:bg-stone-800 text-stone-600 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-700'
+                        ? `${theme.accentBg} ${theme.border} font-bold shadow-md`
+                        : 'bg-stone-50 dark:bg-stone-800/40 border-stone-200 dark:border-stone-700/60 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800'
                     }`}
                   >
-                    {mins}p
+                    <div className="text-sm font-mono font-bold">{preset}</div>
+                    <div className="text-[10px] text-stone-500 dark:text-stone-400">phút</div>
                   </button>
                 );
               })}
+            </div>
 
-              {/* Custom Minutes Input */}
-              <div className="flex items-center gap-1.5 ml-auto">
+            {/* Custom Minutes Input */}
+            <div className="pt-2 flex items-center gap-3">
+              <span className="text-xs text-stone-500 dark:text-stone-400">Hoặc tự nhập:</span>
+              <div className="flex items-center gap-1.5">
                 <input
                   type="number"
                   min="1"
@@ -345,7 +516,9 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
                   value={customDurationInput}
                   onChange={(e) => {
                     const val = e.target.value;
-                    setCustomDurationInput(val);
+                    if (val === '' || (parseInt(val, 10) >= 1 && parseInt(val, 10) <= 120)) {
+                      setCustomDurationInput(val);
+                    }
                   }}
                   placeholder="Tự nhập..."
                   className="w-24 px-3 py-2 text-xs bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl text-stone-900 dark:text-stone-100 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
@@ -366,36 +539,56 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
               <span>Bắt đầu tập trung ({currentDurationValue || 25} phút)</span>
             </button>
             <p className="text-center text-xs text-stone-400 mt-2">
-              Chế độ Không làm phiền sẽ được kích hoạt để giúp bạn tập trung cao độ.
+              Khung bộ đếm sẽ phủ kín toàn trang. Rời tab sẽ tự động tạm dừng. Quá 3 lần vi phạm sẽ hủy phiên.
             </p>
           </div>
         </div>
       ) : (
         /* ============================================================== */
-        /* 2. CHẾ ĐỘ KHÔNG LÀM PHIỀN (ACTIVE MINIMALIST FOCUS MODE)        */
+        /* 2. KHUNG BỘ ĐẾM THỜI GIAN PHỦ KÍN (IN-APP FULLSCREEN OVERLAY)   */
+        /* (ĐÃ XÓA NÚT ZOOM, THIẾT KẾ TỐI GIẢN TẬP TRUNG CAO ĐỘ)           */
         /* ============================================================== */
-        <div className="bg-stone-900/95 dark:bg-black/95 text-stone-100 backdrop-blur-xl rounded-3xl p-6 sm:p-10 border border-stone-800 shadow-2xl relative overflow-hidden transition-all">
+        <div
+          className="fixed inset-0 z-[9999] w-screen h-screen flex flex-col justify-between p-6 sm:p-10 md:p-14 overflow-hidden select-none animate-fade-in"
+          style={{ background: '#0f0f11' }}
+        >
           {/* Subtle Ambient Radial Light */}
-          <div className="absolute -top-24 -right-24 w-72 h-72 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-purple-500/10 blur-3xl pointer-events-none" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-amber-500/10 blur-[130px] pointer-events-none" />
+          <div className="absolute top-0 right-0 w-[450px] h-[450px] rounded-full bg-purple-500/10 blur-[120px] pointer-events-none" />
 
           {/* Top Bar in Focus Mode */}
-          <div className="flex items-center justify-between gap-4 pb-6 border-b border-stone-800 relative z-10">
+          <div className="flex items-center justify-between gap-4 pb-4 border-b border-stone-800/80 relative z-10 w-full">
             <div className="flex items-center gap-2.5">
-              <span className="px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-xs font-semibold">
+              <span className="px-3.5 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-xs font-semibold">
                 {currentActivityMeta.label}
               </span>
-              <h3 className="text-sm sm:text-base font-medium text-stone-200 truncate max-w-[280px] sm:max-w-md">
+              <h3 className="text-sm sm:text-base font-medium text-stone-200 truncate max-w-[240px] sm:max-w-md">
                 {goal || 'Phiên tập trung'}
               </h3>
             </div>
 
-            {/* Ambient Sound & View Controls */}
-            <div className="flex items-center gap-2">
+            {/* Violation Tracker Badge + Ambient Sound Controls (NO ZOOM BUTTON) */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* Violation Count Badge */}
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+                  violationCount === 0
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : violationCount === 1
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                    : 'bg-rose-500/25 text-rose-300 border-rose-500/50 animate-pulse'
+                }`}
+                title="Rời khỏi tab sẽ tự động tạm dừng đồng hồ và tính 1 lần vi phạm"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Vi phạm: {violationCount}/3</span>
+              </div>
+
+              {/* Sound Controls */}
               <button
                 type="button"
                 onClick={() => setIsSoundMuted(!isSoundMuted)}
-                className="p-2 rounded-xl bg-stone-800/80 hover:bg-stone-700 text-stone-300 transition-colors"
+                className="p-2.5 rounded-xl bg-stone-800/90 hover:bg-stone-700 text-stone-300 transition-colors"
                 title={isSoundMuted ? 'Bật âm thanh' : 'Tắt âm thanh'}
               >
                 {isSoundMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-amber-400" />}
@@ -404,7 +597,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
               <select
                 value={ambientSound}
                 onChange={(e) => setAmbientSound(e.target.value as any)}
-                className="bg-stone-800/80 border border-stone-700 rounded-xl px-2.5 py-1.5 text-xs text-stone-200 focus:outline-none"
+                className="bg-stone-800/90 border border-stone-700 rounded-xl px-2.5 py-1.5 text-xs text-stone-200 focus:outline-none hidden sm:block"
               >
                 <option value="rain">🌧️ Tiếng mưa</option>
                 <option value="fireplace">🔥 Lò sưởi</option>
@@ -413,45 +606,43 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
                 <option value="whitenoise">💨 Tiếng ồn trắng</option>
                 <option value="none">🔇 Tắt âm thanh</option>
               </select>
-
-              <button
-                type="button"
-                onClick={() => setIsMinimalistMode(!isMinimalistMode)}
-                className="p-2 rounded-xl bg-stone-800/80 hover:bg-stone-700 text-stone-300 transition-colors hidden sm:block"
-                title="Thu gọn / Mở rộng"
-              >
-                {isMinimalistMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-              </button>
             </div>
           </div>
 
-          {/* Central Timer Display */}
-          <div className="py-10 sm:py-14 flex flex-col items-center justify-center text-center relative z-10">
-            {/* Friendly Non-distraction Reminder */}
-            <p className="text-xs sm:text-sm text-stone-400 mb-4 max-w-md">
-              🌿 Hãy tạm gác lại điện thoại và các thiết bị gây xao nhãng để tận hưởng không gian riêng của bạn.
+          {/* Central Centered Timer Display (Massive Font Size & Perfect Centering) */}
+          <div className="my-auto py-8 sm:py-12 flex flex-col items-center justify-center text-center relative z-10 w-full">
+            <p className="text-xs sm:text-sm text-stone-400 mb-6 max-w-md mx-auto">
+              🌿 Hãy giữ màn hình này và hạn chế thiết bị khác. Khi bạn chuyển tab, bộ đếm sẽ tự động tạm dừng.
             </p>
 
-            {/* Big Countdown Timer */}
-            <div className="text-6xl sm:text-8xl md:text-9xl font-bold tracking-tight font-mono tabular-nums text-white select-none drop-shadow-lg">
+            {/* Huge Prominent Countdown Timer */}
+            <div
+              className="font-bold tracking-tight font-mono tabular-nums text-white select-none drop-shadow-[0_20px_50px_rgba(0,0,0,0.9)]"
+              style={{
+                fontSize: 'clamp(5.5rem, 16vw, 13rem)',
+                lineHeight: 1,
+              }}
+            >
               {formatTime(secondsRemaining)}
             </div>
 
-            {/* Status indicator */}
-            <div className="mt-4 flex items-center gap-2 text-xs font-medium text-stone-400">
-              <span className={`w-2 h-2 rounded-full ${isPaused ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
-              <span>{isPaused ? 'Đang tạm dừng' : 'Đang tập trung'}</span>
+            {/* Status Indicator */}
+            <div className="mt-8 flex items-center gap-2.5 text-xs font-semibold px-4 py-2 rounded-full bg-stone-800/90 border border-stone-700/80 shadow-md">
+              <span className={`w-2.5 h-2.5 rounded-full ${isPaused ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
+              <span className="text-stone-300">
+                {isPaused ? 'Đang tạm dừng (Bấm Tiếp tục khi đã sẵn sàng)' : 'Đang tập trung cao độ'}
+              </span>
             </div>
           </div>
 
           {/* Controls Bar: Pause/Resume + Abandon */}
-          <div className="flex items-center justify-center gap-4 pt-6 border-t border-stone-800 relative z-10">
+          <div className="flex items-center justify-center gap-4 pt-4 border-t border-stone-800/80 relative z-10 w-full">
             <button
               type="button"
               onClick={handleTogglePause}
-              className={`px-6 sm:px-8 py-3.5 rounded-2xl font-semibold text-sm transition-all flex items-center gap-2 shadow-lg ${
+              className={`px-8 sm:px-12 py-4 rounded-2xl font-bold text-sm transition-all flex items-center gap-2 shadow-xl ${
                 isPaused
-                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white animate-pulse'
                   : 'bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700'
               }`}
             >
@@ -474,7 +665,7 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
                 audioService.playClick();
                 setShowAbandonConfirm(true);
               }}
-              className="px-5 py-3.5 rounded-2xl font-medium text-sm text-rose-300 hover:text-white hover:bg-rose-950/40 border border-rose-900/40 transition-colors flex items-center gap-1.5"
+              className="px-6 sm:px-8 py-4 rounded-2xl font-medium text-sm text-rose-300 hover:text-white hover:bg-rose-950/50 border border-rose-900/50 transition-colors flex items-center gap-2"
             >
               <RotateCcw className="w-4 h-4" />
               <span>Từ bỏ phiên</span>
@@ -484,10 +675,125 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* 3. CONFIRM ABANDON MODAL (EXACT SPEC RULE)                     */}
+      {/* 3. VIOLATION WARNING MODAL (LẦN 1 & 2 - BỘ ĐẾM ĐÃ TỰ ĐỘNG TẠM DỪNG) */}
+      {/* ============================================================== */}
+      {violationWarning.show && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setViolationWarning((prev) => ({ ...prev, show: false }));
+              document.title = originalTitleRef.current;
+            }
+          }}
+          className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+        >
+          <div className="bg-stone-900 border-2 border-amber-500 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-4 animate-gentle-float text-stone-100">
+            <div className="w-14 h-14 bg-amber-500/20 border border-amber-500/40 rounded-2xl flex items-center justify-center mx-auto text-amber-400 text-2xl shadow-inner">
+              ⏸️
+            </div>
+
+            <h3 className="text-xl font-bold text-amber-300">
+              Vui lòng quay lại tập trung!
+            </h3>
+
+            {/* Notification that timer was automatically paused */}
+            <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-xs font-semibold text-amber-200">
+              Bộ đếm thời gian đã được tự động tạm dừng.
+            </div>
+
+            <p className="text-sm text-stone-300 leading-relaxed">
+              Cảnh báo vi phạm <span className="font-bold text-amber-400">{violationWarning.count}/3</span> lần do chuyển tab hoặc rời khỏi ứng dụng.
+            </p>
+            <p className="text-xs text-rose-400 font-medium">
+              Quá 3 lần phiên sẽ bị hủy hoàn toàn!
+            </p>
+
+            <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setViolationWarning((prev) => ({ ...prev, show: false }));
+                  document.title = originalTitleRef.current;
+                  handleResume(); // Unpauses and resumes focus
+                }}
+                className="flex-1 py-3.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold text-sm transition-colors shadow-lg flex items-center justify-center gap-1.5"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Tiếp tục tập trung</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  audioService.playClick();
+                  setViolationWarning((prev) => ({ ...prev, show: false }));
+                  document.title = originalTitleRef.current;
+                  // Keeps timer paused as requested
+                }}
+                className="py-3 px-4 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold transition-colors border border-stone-700"
+              >
+                Giữ tạm dừng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 4. VIOLATION EXCEEDED (HỦY PHIÊN DO VI PHẠM >= 3 LẦN)          */}
+      {/* ============================================================== */}
+      {failedDueToViolations && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setFailedDueToViolations(false);
+            }
+          }}
+          className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+        >
+          <div className="bg-stone-900 border-2 border-rose-600 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl text-center space-y-5 animate-gentle-float text-stone-100">
+            <div className="w-16 h-16 bg-rose-500/20 border border-rose-500/40 rounded-3xl flex items-center justify-center mx-auto text-rose-400 text-3xl shadow-inner">
+              🛑
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-rose-400">
+                Phiên tập trung đã bị hủy!
+              </h3>
+              <p className="text-sm text-stone-300 leading-relaxed">
+                Phiên tập trung đã bị hủy do Bạn đã vi phạm rời khỏi màn hình quá 3 lần!
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-rose-950/40 rounded-2xl border border-rose-900/50 text-xs text-rose-300">
+              🌱 Đừng nản lòng, hãy tạo một không gian yên tĩnh hơn và thử lại nhé!
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                audioService.playClick();
+                setFailedDueToViolations(false);
+              }}
+              className="w-full py-3.5 rounded-2xl bg-stone-800 hover:bg-stone-700 text-white font-bold text-sm transition-all border border-stone-700 shadow-md"
+            >
+              Đóng và thử lại
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* 5. CONFIRM ABANDON MODAL                                       */}
       {/* ============================================================== */}
       {showAbandonConfirm && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowAbandonConfirm(false);
+            }
+          }}
+          className="fixed inset-0 z-[10000] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+        >
           <div className="bg-white dark:bg-stone-900 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-stone-200 dark:border-stone-800 text-center space-y-4 animate-gentle-float">
             <div className="w-12 h-12 bg-amber-100 dark:bg-amber-950/60 rounded-2xl flex items-center justify-center mx-auto text-amber-600 dark:text-amber-400">
               <AlertCircle className="w-6 h-6" />
@@ -522,10 +828,18 @@ export const FocusTimer: React.FC<FocusTimerProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* 4. COMPLETION MODAL                                            */}
+      {/* 6. COMPLETION MODAL                                            */}
       {/* ============================================================== */}
       {showCompleteModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              audioService.playClick();
+              setShowCompleteModal(false);
+            }
+          }}
+          className="fixed inset-0 z-[10000] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+        >
           <div className="bg-white dark:bg-stone-900 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-stone-200 dark:border-stone-800 text-center space-y-5 animate-gentle-float">
             <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-3xl flex items-center justify-center mx-auto text-3xl shadow-inner">
               🎉

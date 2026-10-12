@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings,
   X,
@@ -44,6 +44,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [confirmClear, setConfirmClear] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
+  // Close on ESC key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const themes: { key: ThemeColor; label: string; emoji: string }[] = [
@@ -74,7 +86,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          audioService.playClick();
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+    >
       <div className="bg-white dark:bg-stone-900 rounded-3xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl border border-stone-200 dark:border-stone-800 overflow-hidden">
         {/* Header */}
         <div className="px-6 py-4 border-b border-stone-200 dark:border-stone-800 flex items-center justify-between">

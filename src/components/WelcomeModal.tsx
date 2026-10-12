@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ChibiCharacter } from './ChibiCharacter';
 import { ThemeColor } from '../types';
 import { THEME_CONFIGS } from '../data/items';
@@ -11,11 +11,31 @@ interface WelcomeModalProps {
 }
 
 export const WelcomeModal: React.FC<WelcomeModalProps> = ({ isOpen, onClose, themeColor }) => {
+  // Close on ESC key
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
   const theme = THEME_CONFIGS[themeColor];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          audioService.playClick();
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+    >
       <div className="bg-white dark:bg-stone-900 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-stone-200 dark:border-stone-800 text-center space-y-5 animate-gentle-float">
         {/* Satisfy Font Brand Logo */}
         <div className="space-y-1">

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { CharacterState, RoomCustomization } from '../types';
 import { ChibiCharacter } from './ChibiCharacter';
 import { VirtualPet } from './VirtualPet';
@@ -23,6 +23,20 @@ export const AlcoveRoom: React.FC<AlcoveRoomProps> = ({
   isFocusModeActive = false,
 }) => {
   const { deskItem, wallItem, floorItem, petItem, windowView, lampOn } = roomSetup;
+
+  // Real-time clock logic
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formattedTime = currentTime.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 
   return (
     <div className="relative w-full max-w-4xl mx-auto aspect-[16/10] sm:aspect-[16/9] min-h-[380px] max-h-[560px] rounded-3xl overflow-hidden shadow-2xl border border-amber-900/10 dark:border-stone-800 bg-stone-900 select-none">
@@ -204,11 +218,14 @@ export const AlcoveRoom: React.FC<AlcoveRoomProps> = ({
           )}
         </div>
 
-        {/* Shelf 2: Cactus / Mini Succulent + Clock */}
+        {/* Shelf 2: Cactus / Mini Succulent + Real-Time Digital Clock */}
         <div className="w-full h-[32%] border-b-4 border-[#7F5539] flex items-end justify-between px-1 pb-0.5">
-          <div className="w-3.5 h-4 bg-stone-300 border border-stone-400 rounded-t-sm" />
-          <div className="w-5 h-7 bg-amber-200 border border-amber-400 rounded-md flex items-center justify-center text-[7px] font-bold text-amber-900">
-            10:10
+          <div className="w-3.5 h-4 bg-stone-300 border border-stone-400 rounded-t-sm" title="Sen đá nhỏ" />
+          <div
+            className="min-w-[26px] h-6 px-1 bg-amber-100 dark:bg-stone-800 border border-amber-300 dark:border-stone-600 rounded-md flex items-center justify-center font-mono text-[7px] font-bold text-amber-950 dark:text-amber-200 shadow-inner tracking-tighter select-none"
+            title={`Đồng hồ để bàn: ${formattedTime}`}
+          >
+            {formattedTime}
           </div>
         </div>
 
