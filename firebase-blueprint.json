@@ -1,0 +1,186 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User progress, unlocked items, and room customization state",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Unique user ID from Firebase Auth",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "User Google email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name",
+          "maxLength": 128
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Google avatar URL",
+          "maxLength": 512
+        },
+        "focusPoints": {
+          "type": "number",
+          "description": "Current balance of spendable focus points"
+        },
+        "totalPointsEarned": {
+          "type": "number",
+          "description": "Lifetime accumulated focus points"
+        },
+        "currentStreak": {
+          "type": "number",
+          "description": "Consecutive active days"
+        },
+        "longestStreak": {
+          "type": "number",
+          "description": "Personal highest consecutive active days"
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "description": "Last active date formatted YYYY-MM-DD",
+          "maxLength": 32
+        },
+        "ownedItemIds": {
+          "type": "array",
+          "description": "List of unlocked room and theme item IDs"
+        },
+        "roomSetup": {
+          "type": "object",
+          "description": "Active customization configuration for the Alcove room"
+        },
+        "streakRewardsClaimed": {
+          "type": "array",
+          "description": "Milestone streak days for which bonus points were already claimed"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "focusPoints", "totalPointsEarned", "currentStreak", "longestStreak"]
+    },
+    "FocusSession": {
+      "title": "FocusSession",
+      "description": "Single completed or abandoned Pomodoro focus session",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Session unique identifier",
+          "maxLength": 128
+        },
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the session owner",
+          "maxLength": 128
+        },
+        "startTime": {
+          "type": "string",
+          "description": "Start timestamp in ISO string",
+          "maxLength": 64
+        },
+        "endTime": {
+          "type": "string",
+          "description": "End timestamp in ISO string",
+          "maxLength": 64
+        },
+        "activityType": {
+          "type": "string",
+          "description": "Type of activity",
+          "enum": ["study", "work", "reading", "planning", "writing", "creative", "other"]
+        },
+        "goal": {
+          "type": "string",
+          "description": "Objective description of what the user is working on",
+          "maxLength": 200
+        },
+        "durationMinutes": {
+          "type": "number",
+          "description": "Target timer duration in minutes"
+        },
+        "actualMinutes": {
+          "type": "number",
+          "description": "Actual minutes focused"
+        },
+        "status": {
+          "type": "string",
+          "description": "Outcome status of the session",
+          "enum": ["completed", "abandoned"]
+        },
+        "pointsEarned": {
+          "type": "number",
+          "description": "Focus Points awarded for the session"
+        },
+        "dateStr": {
+          "type": "string",
+          "description": "Date representation YYYY-MM-DD",
+          "maxLength": 32
+        }
+      },
+      "required": ["id", "userId", "startTime", "endTime", "activityType", "status", "pointsEarned", "dateStr"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Personalized application preferences",
+      "type": "object",
+      "properties": {
+        "themeColor": {
+          "type": "string",
+          "description": "Selected theme color palette",
+          "enum": ["green", "blue", "pink", "purple", "brown", "white"]
+        },
+        "darkMode": {
+          "type": "boolean",
+          "description": "Dark theme toggle"
+        },
+        "soundVolume": {
+          "type": "number",
+          "description": "Master audio volume level between 0 and 1"
+        },
+        "ambientSound": {
+          "type": "string",
+          "description": "Selected background ambient noise",
+          "enum": ["none", "rain", "fireplace", "cafe", "forest", "whitenoise"]
+        },
+        "timerChime": {
+          "type": "boolean",
+          "description": "Play bell chime when timer ends"
+        },
+        "showCharacter": {
+          "type": "boolean",
+          "description": "Render chibi character in the room"
+        },
+        "showPet": {
+          "type": "boolean",
+          "description": "Render virtual pet in the room"
+        },
+        "hasSeenWelcome": {
+          "type": "boolean",
+          "description": "Whether user acknowledged onboarding modal"
+        }
+      },
+      "required": ["themeColor", "darkMode", "soundVolume", "timerChime"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user profile and overall Alcove progress"
+    },
+    "/users/{userId}/sessions/{sessionId}": {
+      "schema": "FocusSession",
+      "description": "Stores individual focus timer sessions for user history and statistics"
+    },
+    "/users/{userId}/settings/{settingId}": {
+      "schema": "UserSettings",
+      "description": "Stores user visual and audio preferences"
+    }
+  }
+}

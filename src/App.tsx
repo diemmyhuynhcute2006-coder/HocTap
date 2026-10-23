@@ -12,6 +12,9 @@ import {
   Sparkles,
   Volume2,
   VolumeX,
+  LogIn,
+  LogOut,
+  RefreshCw,
 } from 'lucide-react';
 import {
   CharacterState,
@@ -21,6 +24,7 @@ import {
   ThemeColor,
   UserProgress,
   UserSettings,
+  AppUser,
 } from './types';
 import { THEME_CONFIGS, STREAK_REWARDS } from './data/items';
 import { AlcoveRoom } from './components/AlcoveRoom';
@@ -32,7 +36,20 @@ import { HistoryView } from './components/HistoryView';
 import { SettingsModal } from './components/SettingsModal';
 import { WelcomeModal } from './components/WelcomeModal';
 import { StreakRewardModal } from './components/StreakRewardModal';
+import { AuthModal } from './components/AuthModal';
 import { audioService } from './utils/audio';
+import { onAuthStateChanged } from 'firebase/auth';
+import {
+  auth,
+  signInWithGoogle,
+  logOutFromApp,
+  fetchUserProfile,
+  saveUserProfile,
+  saveFocusSessionToDb,
+  fetchUserSessionsFromDb,
+  saveUserSettingsToDb,
+  fetchUserSettingsFromDb,
+} from './utils/firebase';
 
 const STORAGE_KEY_PROGRESS = 'my_alcove_progress_v1';
 const STORAGE_KEY_SETTINGS = 'my_alcove_settings_v1';
@@ -126,6 +143,83 @@ export default function App() {
   // Character emotional state
   const [characterState, setCharacterState] = useState<CharacterState>('idle');
   const [isFocusing, setIsFocusing] = useState<boolean>(false);
+
+  // Google Firebase Auth State
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<{ message: string; code: string } | null>(null);
+  const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
+
+  // Real-time Firebase Auth listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const appUser: AppUser = {
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          displayName: firebaseUser.displayName,
+          photoURL: firebaseUser.photoURL,
+        };
+        setUser(appUser);
+
+        try {
+          const cloudProfile = await fetchUserProfile(firebaseUser.uid, {
+            email: firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            photoURL: firebaseUser.photoURL,
+          });
+
+          if (cloudProfile) {
+            const cloudSessions = await fetchUserSessionsFromDb(firebaseUser.uid);
+            setProgress({
+              ...cloudProfile,
+              sessions: cloudSessions.length > 0 ? cloudSessions : cloudProfile.sessions,
+            });
+          } else {
+            await saveUserProfile(firebaseUser.uid, progress, {
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName,
+              photoURL: firebaseUser.photoURL,
+            });
+          }
+
+          const cloudSettings = await fetchUserSettingsFromDb(firebaseUser.uid);
+          if (cloudSettings) {
+            setSettings(cloudSettings);
+          }
+        } catch (err) {
+          console.error('Error fetching Firestore user data:', err);
+        }
+      } else {
+        setUser(null);
+      }
+      setIsAuthLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Sync progress to Firestore
+  useEffect(() => {
+    if (user && !isAuthLoading) {
+      saveUserProfile(user.uid, progress, {
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL,
+      }).catch((err) => console.error('Error saving progress to Firestore:', err));
+    }
+  }, [progress, user, isAuthLoading]);
+
+  // Sync settings to Firestore
+  useEffect(() => {
+    if (user && !isAuthLoading) {
+      saveUserSettingsToDb(user.uid, settings).catch((err) =>
+        console.error('Error saving settings to Firestore:', err)
+      );
+    }
+  }, [settings, user, isAuthLoading]);
 
   // Save to LocalStorage
   useEffect(() => {
@@ -241,6 +335,12 @@ export default function App() {
       sessions: [newSession, ...prev.sessions],
     }));
 
+    if (user) {
+      saveFocusSessionToDb(user.uid, newSession).catch((err) =>
+        console.error('Failed to save session to Firestore:', err)
+      );
+    }
+
     setCharacterState('complete');
     setTimeout(() => {
       setCharacterState('idle');
@@ -258,6 +358,12 @@ export default function App() {
       ...prev,
       sessions: [newSession, ...prev.sessions],
     }));
+
+    if (user) {
+      saveFocusSessionToDb(user.uid, newSession).catch((err) =>
+        console.error('Failed to save abandoned session to Firestore:', err)
+      );
+    }
 
     setCharacterState('giveup');
     setTimeout(() => {
@@ -380,6 +486,40 @@ export default function App() {
     if (parsed.settings) setSettings(parsed.settings);
   };
 
+  // Google Authentication Handlers
+  const handleSignIn = async () => {
+    setIsSigningIn(true);
+    setAuthError(null);
+    const result = await signInWithGoogle();
+    setIsSigningIn(false);
+
+    if (result.error) {
+      setAuthError(result.error);
+      setIsAuthModalOpen(true);
+    } else if (result.user) {
+      setIsAuthModalOpen(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    setIsUserMenuOpen(false);
+    await logOutFromApp();
+    setUser(null);
+    setProgress(getInitialProgress());
+    setSettings(getInitialSettings());
+  };
+
+  const handleSwitchAccount = async () => {
+    setIsUserMenuOpen(false);
+    await logOutFromApp();
+    setUser(null);
+    setProgress(getInitialProgress());
+    setSettings(getInitialSettings());
+    setTimeout(() => {
+      handleSignIn();
+    }, 250);
+  };
+
   return (
     <div className={`min-h-screen flex flex-col transition-colors duration-300 ${settings.darkMode ? 'dark bg-stone-950 text-stone-100' : 'bg-stone-50 text-stone-800'}`}>
       {/* ============================================================== */}
@@ -461,6 +601,111 @@ export default function App() {
           >
             <SettingsIcon className="w-4 h-4" />
           </button>
+
+          {/* User Auth Section in Header */}
+          {isAuthLoading ? (
+            <div className="w-8 h-8 rounded-full bg-stone-200 dark:bg-stone-800 animate-pulse shrink-0" />
+          ) : !user ? (
+            <button
+              type="button"
+              onClick={() => {
+                audioService.playClick();
+                setIsAuthModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer shrink-0"
+              title="Đăng nhập tài khoản Google"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Đăng nhập</span>
+            </button>
+          ) : (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  audioService.playClick();
+                  setIsUserMenuOpen(!isUserMenuOpen);
+                }}
+                className="flex items-center gap-2 p-1 pl-1 pr-2.5 rounded-full bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 border border-stone-200 dark:border-stone-700 transition-colors cursor-pointer"
+                title={user.displayName || user.email || 'Tài khoản Google'}
+              >
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={user.displayName || 'Google Avatar'}
+                    className="w-6 h-6 rounded-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center">
+                    {user.displayName ? user.displayName.charAt(0).toUpperCase() : 'G'}
+                  </div>
+                )}
+                <span className="text-xs font-medium text-stone-700 dark:text-stone-200 max-w-[80px] sm:max-w-[120px] truncate hidden xs:inline">
+                  {user.displayName?.split(' ')[0] || 'Tài khoản'}
+                </span>
+              </button>
+
+              {/* User Dropdown */}
+              {isUserMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setIsUserMenuOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-stone-900 rounded-2xl shadow-xl border border-stone-200 dark:border-stone-800 p-3 z-50 animate-fade-in space-y-3">
+                    <div className="flex items-center gap-3 pb-2.5 border-b border-stone-100 dark:border-stone-800">
+                      {user.photoURL ? (
+                        <img
+                          src={user.photoURL}
+                          alt={user.displayName || 'Google Avatar'}
+                          className="w-9 h-9 rounded-full object-cover shrink-0"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-amber-500 text-white text-sm font-bold flex items-center justify-center shrink-0">
+                          {user.displayName ? user.displayName.charAt(0).toUpperCase() : 'G'}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-bold text-stone-900 dark:text-stone-100 truncate">
+                          {user.displayName || 'Người dùng Google'}
+                        </div>
+                        <div className="text-[11px] text-stone-500 dark:text-stone-400 truncate">
+                          {user.email || 'Không có email'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          audioService.playClick();
+                          handleSwitchAccount();
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 flex items-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Đổi tài khoản khác</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          audioService.playClick();
+                          handleSignOut();
+                        }}
+                        className="w-full px-3 py-2 rounded-xl text-left text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Đăng xuất</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -585,6 +830,36 @@ export default function App() {
 
         {/* Content Area */}
         <main className="flex-1 flex flex-col space-y-6 pb-20 lg:pb-6">
+          {/* Cloud Sync prompt if unauthenticated */}
+          {!isAuthLoading && !user && (
+            <div className="p-4 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-200/60 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-amber-950 dark:text-amber-200">
+                    Đăng nhập tài khoản Google để lưu trữ đám mây
+                  </h4>
+                  <p className="text-[11px] text-amber-800/80 dark:text-amber-400 mt-0.5">
+                    Đồng bộ vĩnh viễn chuỗi Streak, thành tích, vật phẩm trang trí và căn phòng Alcove của bạn.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  audioService.playClick();
+                  setIsAuthModalOpen(true);
+                }}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs transition-colors shrink-0 cursor-pointer"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Đăng nhập với Google</span>
+              </button>
+            </div>
+          )}
+
           {/* TAB 1: GÓC CỦA TÔI (MY ALCOVE ROOM & FOCUS SHORTCUT) */}
           {activeTab === 'room' && (
             <div className="space-y-6">
@@ -793,6 +1068,12 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
+        user={user}
+        onSignIn={() => {
+          setIsSettingsOpen(false);
+          setIsAuthModalOpen(true);
+        }}
+        onSignOut={handleSignOut}
         onUpdateSettings={(newPartial) => setSettings((prev) => ({ ...prev, ...newPartial }))}
         onResetProgress={handleResetProgress}
         onClearAllData={handleClearAllData}
@@ -822,6 +1103,16 @@ export default function App() {
           themeColor={settings.themeColor}
         />
       )}
+
+      {/* 6. Google Auth Modal */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSignInWithGoogle={handleSignIn}
+        isLoading={isSigningIn}
+        errorMessage={authError?.message ?? null}
+        errorCode={authError?.code ?? null}
+      />
     </div>
   );
 }

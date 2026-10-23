@@ -1,0 +1,101 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['userId', 'focusPoints', 'totalPointsEarned', 'currentStreak', 'longestStreak']) &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.focusPoints is number && data.focusPoints >= 0 &&
+        data.totalPointsEarned is number && data.totalPointsEarned >= 0 &&
+        data.currentStreak is number && data.currentStreak >= 0 &&
+        data.longestStreak is number && data.longestStreak >= 0 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 256)) &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128)) &&
+        (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512)) &&
+        (!('lastActiveDate' in data) || (data.lastActiveDate is string && data.lastActiveDate.size() <= 32)) &&
+        (!('ownedItemIds' in data) || (data.ownedItemIds is list && data.ownedItemIds.size() <= 200)) &&
+        (!('roomSetup' in data) || data.roomSetup is map) &&
+        (!('streakRewardsClaimed' in data) || (data.streakRewardsClaimed is list && data.streakRewardsClaimed.size() <= 50));
+    }
+
+    function isValidFocusSession(data) {
+      return data.keys().hasAll(['id', 'userId', 'startTime', 'endTime', 'activityType', 'status', 'pointsEarned', 'dateStr']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.startTime is string && data.startTime.size() <= 64 &&
+        data.endTime is string && data.endTime.size() <= 64 &&
+        data.activityType is string && data.activityType in ['study', 'work', 'reading', 'planning', 'writing', 'creative', 'other'] &&
+        data.status is string && data.status in ['completed', 'abandoned'] &&
+        data.pointsEarned is number && data.pointsEarned >= 0 &&
+        data.dateStr is string && data.dateStr.size() <= 32 &&
+        (!('goal' in data) || (data.goal is string && data.goal.size() <= 200)) &&
+        (!('durationMinutes' in data) || data.durationMinutes is number) &&
+        (!('actualMinutes' in data) || data.actualMinutes is number);
+    }
+
+    function isValidUserSettings(data) {
+      return data.keys().hasAll(['themeColor', 'darkMode', 'soundVolume', 'timerChime']) &&
+        data.themeColor is string && data.themeColor in ['green', 'blue', 'pink', 'purple', 'brown', 'white'] &&
+        data.darkMode is bool &&
+        data.soundVolume is number && data.soundVolume >= 0 && data.soundVolume <= 1 &&
+        data.timerChime is bool &&
+        (!('ambientSound' in data) || (data.ambientSound is string && data.ambientSound in ['none', 'rain', 'fireplace', 'cafe', 'forest', 'whitenoise'])) &&
+        (!('showCharacter' in data) || data.showCharacter is bool) &&
+        (!('showPet' in data) || data.showPet is bool) &&
+        (!('hasSeenWelcome' in data) || data.hasSeenWelcome is bool);
+    }
+
+    // User document
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && isValidId(userId) && incoming().userId == userId && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidId(userId) && incoming().userId == existing().userId && isValidUserProfile(incoming());
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Focus sessions subcollection
+      match /sessions/{sessionId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(sessionId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(sessionId) && incoming().userId == userId && isValidFocusSession(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(sessionId) && incoming().userId == existing().userId && isValidFocusSession(incoming());
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(sessionId);
+      }
+
+      // Settings subcollection
+      match /settings/{settingId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(settingId);
+        allow list: if isOwner(userId) && isValidId(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(settingId) && isValidUserSettings(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(settingId) && isValidUserSettings(incoming());
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(settingId);
+      }
+    }
+  }
+}

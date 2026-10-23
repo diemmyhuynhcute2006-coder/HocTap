@@ -14,8 +14,11 @@ import {
   Upload,
   AlertTriangle,
   Check,
+  LogIn,
+  LogOut,
+  RefreshCw,
 } from 'lucide-react';
-import { ThemeColor, UserSettings } from '../types';
+import { ThemeColor, UserSettings, AppUser } from '../types';
 import { THEME_CONFIGS } from '../data/items';
 import { audioService } from '../utils/audio';
 
@@ -23,6 +26,9 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: UserSettings;
+  user: AppUser | null;
+  onSignIn: () => void;
+  onSignOut: () => void;
   onUpdateSettings: (newSettings: Partial<UserSettings>) => void;
   onResetProgress: () => void;
   onClearAllData: () => void;
@@ -34,6 +40,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   settings,
+  user,
+  onSignIn,
+  onSignOut,
   onUpdateSettings,
   onResetProgress,
   onClearAllData,
@@ -125,6 +134,87 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Settings Body */}
         <div className="p-6 overflow-y-auto flex-1 space-y-6">
+          {/* 0. Google Account Section */}
+          <div className="p-4 rounded-2xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                Tài khoản Google
+              </span>
+              <span className="text-[11px] text-amber-700/80 dark:text-amber-400 font-medium">
+                {user ? 'Đã đăng nhập' : 'Chưa đăng nhập'}
+              </span>
+            </div>
+
+            {user ? (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                <div className="flex items-center gap-3">
+                  {user.photoURL ? (
+                    <img
+                      src={user.photoURL}
+                      alt={user.displayName || 'Google Avatar'}
+                      className="w-10 h-10 rounded-full border border-amber-300 dark:border-amber-700 object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 font-bold flex items-center justify-center text-sm">
+                      {user.displayName ? user.displayName.charAt(0).toUpperCase() : 'U'}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-stone-900 dark:text-stone-100 truncate">
+                      {user.displayName || 'Người dùng Google'}
+                    </div>
+                    <div className="text-[11px] text-stone-500 dark:text-stone-400 truncate">
+                      {user.email || 'Không có email'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      audioService.playClick();
+                      onSignIn();
+                    }}
+                    className="px-3 py-1.5 rounded-xl border border-stone-300 dark:border-stone-700 text-stone-700 dark:text-stone-300 hover:bg-stone-100 dark:hover:bg-stone-800 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Đổi tài khoản</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      audioService.playClick();
+                      onSignOut();
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Đăng xuất</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                <p className="text-xs text-stone-600 dark:text-stone-400 leading-relaxed">
+                  Đăng nhập bằng tài khoản Google để tự động đồng bộ tiến trình học tập, chuỗi Streak và phòng Alcove.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    audioService.playClick();
+                    onSignIn();
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-2xs transition-colors shrink-0 cursor-pointer"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>Đăng nhập với Google</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* 1. Theme Color Selection */}
           <div className="space-y-3">
             <label className="text-xs font-bold uppercase tracking-wider text-stone-600 dark:text-stone-400">
